@@ -1,36 +1,45 @@
 'use client'
 import { useState, useEffect } from "react";
-import { loadConnectAndInitialize } from "@stripe/connect-js";
+import { loadConnectAndInitialize, StripeConnectInstance } from "@stripe/connect-js";
+import { useSearchParams } from 'next/navigation';
+import { jwtDecode } from "jwt-decode";
 
-export const useStripeConnect = (connectedAccountId: string) => {
-  const [stripeConnectInstance, setStripeConnectInstance] = useState<any>();
+export const useStripeConnect = () => {
+  const [stripeConnectInstance, setStripeConnectInstance] = useState<StripeConnectInstance>();
+  const searchParams = useSearchParams();
+  const token = searchParams.get('jwt');
 
   useEffect(() => {
-    if (connectedAccountId) {
-      const fetchClientSecret = async () => {
-        const response = await fetch("https://dl06f080-4242.inc1.devtunnels.ms/account_session", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            account: connectedAccountId,
-          }),
-        });
-
-        if (!response.ok) {
-          // Handle errors on the client side here
-          const { error } = await response.json();
-          throw (error);
-        } else {
-          const { client_secret: clientSecret } = await response.json();
-          return clientSecret;
+    const initializeStripeConnect = async () => {
+      try {
+        if (!token) {
+          console.warn('No JWT token found');
+          return;
         }
-      };
 
-      setStripeConnectInstance(
-        loadConnectAndInitialize({
-          publishableKey: process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? '',
+        let decoded;
+        try {
+          decoded = jwtDecode(token) as { client_secret?: string };
+        } catch (decodeError) {
+          console.error('Invalid JWT token', decodeError);
+          return;
+        }
+
+        const clientSecret = decoded?.client_secret;
+        if (!clientSecret) {
+          console.error('No client secret found in JWT');
+          return;
+        }
+
+        const fetchClientSecret = async () => clientSecret;
+
+        const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+        if (!publishableKey) {
+          throw new Error('Stripe publishable key is not configured');
+        }
+
+        const connectInstance = loadConnectAndInitialize({
+          publishableKey,
           fetchClientSecret,
           appearance: {
             overlays: "dialog",
@@ -38,10 +47,17 @@ export const useStripeConnect = (connectedAccountId: string) => {
               colorPrimary: "#635BFF",
             },
           },
-        })
-      );
-    }
-  }, [connectedAccountId]);
+        });
+
+        setStripeConnectInstance(connectInstance);
+      } catch (error) {
+        console.error('Failed to initialize Stripe Connect', error);
+        setStripeConnectInstance(undefined);
+      }
+    };
+
+    initializeStripeConnect();
+  }, [token]);
 
   return stripeConnectInstance;
 };
